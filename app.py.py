@@ -22,7 +22,7 @@ uploaded_oi = st.sidebar.file_uploader(
 )
 
 
-# Hàm xử lý file QuikStrike giống như code Python trên máy
+# Hàm xử lý file QuikStrike
 def process_quikstrike(file):
   df_raw = pd.read_csv(file, header=0)
   strike = pd.to_numeric(df_raw.iloc[:, 0], errors="coerce")
@@ -74,7 +74,7 @@ if st.button(
       df_oi["Total_OI"] = df_oi["Call"] + df_oi["Put"]
       tot_idx = df_oi["Total_OI"].idxmax()
       max_tot_strike = df_oi.loc[tot_idx, "Strike"]
-      max_tot_val = df_oi.loc[tot_idx, "Total_OI"]
+      max_tot_val = df_oi.loc[tot_idx, "Total_OI"]  # Đã gán đúng biến này
 
     st.success("✅ Xử lý thành công! Dưới đây là các thông số để nhập TradingView:")
 
@@ -110,7 +110,7 @@ if st.button(
       st.metric(
           label="Max Total OI (Pin)",
           value=f"{max_tot_strike}",
-          delta=f"{max_tot_vol} HĐ",
+          delta=f"{max_tot_val} HĐ",
       )
 
   else:
