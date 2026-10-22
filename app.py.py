@@ -124,24 +124,53 @@ if st.button(
         " `Open_Interest.csv` để hiển thị phần QuikStrike!"
     )
 
-  # Xử lý phần Event Volatility Calculator mở rộng
+  # Xử lý phần Event Volatility Calculator mở rộng & Tính Expected Move
   if uploaded_event is not None:
     st.markdown("---")
-    st.subheader("⚡ MÔ HÌNH TÍNH TOÁN BIẾN ĐỘNG SỰ KIỆN (EVENT VOLATILITY)")
+    st.subheader("⚡ MÔ HÌNH TÍNH TOÁN BIẾN ĐỘNG SỰ KIỆN & EXPECTED MOVE")
     try:
       df_event = pd.read_excel(uploaded_event)
-      st.dataframe(df_event.dropna(how="all"), use_container_width=True)
-      st.info(
-          "💡 **Gợi ý Quant:** Sử dụng các thông số $\\sigma_{\\text{EVENT}}$ từ"
-          " bảng trên để đánh giá mức độ co giãn phí quyền chọn trước và sau"
-          " tin tức lớn (như FOMO, CPI, NFP), phục vụ chiến lược quản trị rủi"
-          " ro hoặc giao dịch biên độ breakout cho XAU/USD."
+
+      # Nhập giá Spot tham chiếu để tính biên độ Expected Move
+      col_spot_input, _ = st.columns([1, 2])
+      with col_spot_input:
+        current_spot = st.number_input(
+            "Nhập giá Spot tham chiếu (GC1! / XAU):", value=4036.0, step=1.0
+        )
+        sigma_event_input = st.number_input(
+            "Nhập độ biến động sự kiện Sigma Event (%):",
+            value=15.0,
+            step=0.5,
+        )
+        days_to_expiry = st.number_input(
+            "Số ngày đến khi đáo hạn/ra tin:", value=1.0, step=0.5
+        )
+
+      # Tính toán Expected Move
+      import math
+
+      expected_move_val = (
+          current_spot
+          * (sigma_event_input / 100.0)
+          * math.sqrt(days_to_expiry / 365.0)
       )
+      upper_bound = current_spot + expected_move_val
+      lower_bound = current_spot - expected_move_val
+
+      st.info(
+          f"🎯 **Biên độ dự kiến (Expected Move):** $\\pm$ **"
+          f"{expected_move_val:.2f} USD** (Vùng giá dao động an toàn:"
+          f" **{lower_bound:.2f}** đến **{upper_bound:.2f}**)"
+      )
+
+      # Hiển thị bảng Excel gốc
+      st.dataframe(df_event.dropna(how="all"), use_container_width=True)
+
     except Exception as e:
       st.error(f"Lỗi đọc file Excel Event Volatility: {e}")
   else:
     st.markdown("---")
     st.info(
         "ℹ️ Bạn có thể tải lên file Excel `Event Volatility Calculator.xlsx` ở"
-        " thanh bên trái để hiển thị bảng phân tích độ biến động sự kiện."
+        " thanh bên trái để kích hoạt mô hình tính toán biến động sự kiện."
     )
