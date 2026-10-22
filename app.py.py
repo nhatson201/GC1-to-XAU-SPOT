@@ -44,10 +44,10 @@ days_to_expiry = st.sidebar.number_input(
 
 
 # ==========================================
-# 3. HÀM XỬ LÝ DỮ LIỆU QUIKSTRIKE THEO NGÀY CHỈ ĐỊNH
+# 3. HÀM LẤY DANH SÁCH CÁC NGÀY CÓ TRONG FILE CSV
 # ==========================================
 def get_available_dates(file):
-  file.seek(0)  # Reset con trỏ đọc file
+  file.seek(0)
   df_raw = pd.read_csv(file, header=None)
   date_row = df_raw.iloc[0, :]
   dates = [
@@ -58,17 +58,23 @@ def get_available_dates(file):
   return sorted(list(set(dates)), reverse=True)
 
 
+# ==========================================
+# 4. HÀM RÚT DỮ LIỆU OI & GEX THEO ĐÚNG NGÀY ĐƯỢC CHỌN
+# ==========================================
 def process_quikstrike_by_date(file, target_date):
-  file.seek(0)  # Reset con trỏ đọc file
+  file.seek(0)
   df_raw = pd.read_csv(file, header=None)
 
+  # Cột 0 chứa các mốc Strike (bắt đầu từ hàng thứ 3 - index 2)
   strike = pd.to_numeric(df_raw.iloc[2:, 0], errors="coerce")
+
   date_row = df_raw.iloc[0, :]
   c_p_row = df_raw.iloc[1, :]
 
   call_col_idx = None
   put_col_idx = None
 
+  # Dò chính xác cột Call (C) và Put (P) thuộc ngày target_date
   for col_idx in range(len(date_row)):
     d_val = str(date_row.iloc[col_idx]).strip()
     if d_val == target_date:
@@ -78,32 +84,15 @@ def process_quikstrike_by_date(file, target_date):
       elif cp_val == "P":
         put_col_idx = col_idx
 
+  # Trích xuất đúng dữ liệu của ngày được chọn
   if call_col_idx is not None and put_col_idx is not None:
     calls = pd.to_numeric(df_raw.iloc[2:, call_col_idx], errors="coerce").fillna(
         0
     )
     puts = pd.to_numeric(df_raw.iloc[2:, put_col_idx], errors="coerce").fillna(0)
   else:
-    c_indices = [
-        i
-        for i, val in enumerate(c_p_row)
-        if str(val).strip().upper() == "C" and i > 0
-    ]
-    p_indices = [
-        i
-        for i, val in enumerate(c_p_row)
-        if str(val).strip().upper() == "P" and i > 0
-    ]
-    calls = (
-        df_raw.iloc[2:, c_indices]
-        .apply(pd.to_numeric, errors="coerce")
-        .sum(axis=1)
-    )
-    puts = (
-        df_raw.iloc[2:, p_indices]
-        .apply(pd.to_numeric, errors="coerce")
-        .sum(axis=1)
-    )
+    calls = pd.Series(0, index=df_raw.index[2:])
+    puts = pd.Series(0, index=df_raw.index[2:])
 
   df = pd.DataFrame(
       {"Strike": strike, "Call": calls, "Put": puts}
@@ -112,22 +101,31 @@ def process_quikstrike_by_date(file, target_date):
 
 
 # ==========================================
-# 4. GIAO DIỆN PHÂN TÍCH QUIKSTRIKE DAY TRADING
+# 5. GIAO DIỆN PHÂN TÍCH THEO NGÀY TÙY CHỌN
 # ==========================================
 selected_date = None
-if uploaded_gamma is not None:
-  available_dates = get_available_dates(uploaded_gamma)
-  if available_dates:
+if uploaded_gamma is not None and uploaded_oi is not None:
+  dates_gamma = get_available_dates(uploaded_gamma)
+  dates_oi = get_available_dates(uploaded_oi)
+
+  # Lấy giao các ngày chung có trong cả 2 file Gamma & OI
+  common_dates = sorted(
+      list(set(dates_gamma).intersection(set(dates_oi))), reverse=True
+  )
+
+  if common_dates:
     selected_date = st.sidebar.selectbox(
-        "📅 Chọn Ngày/Tháng/Năm Day Trading:", available_dates
+        "📅 Chọn Ngày/Tháng/Năm Day Trading:", common_dates
     )
 
 if st.button(
     "🚀 BẮT ĐẦU PHÂN TÍCH THEO NGÀY", type="primary", use_container_width=True
 ):
   if uploaded_gamma is not None and uploaded_oi is not None and selected_date:
-    with st.spinner(f"Đang xử lý dữ liệu cho phiên ngày {selected_date}..."):
-      # Xử lý GEX theo ngày chọn
+    with st.spinner(
+        f"Đang phân tích dữ liệu OI & GEX của ngày {selected_date}..."
+    ):
+      # 1. Xử lý GEX của ngày được chọn
       df_gex = process_quikstrike_by_date(uploaded_gamma, selected_date)
       gex_c_idx = df_gex["Call"].idxmax()
       gex_p_idx = df_gex["Put"].idxmax()
@@ -140,7 +138,7 @@ if st.button(
       df_gex["Net_GEX"] = (df_gex["Call"] - df_gex["Put"]).abs()
       gamma_flip_strike = df_gex.loc[df_gex["Net_GEX"].idxmin(), "Strike"]
 
-      # Xử lý OI theo ngày chọn
+      # 2. Xử lý Open Interest (OI) của ngày được chọn
       df_oi = process_quikstrike_by_date(uploaded_oi, selected_date)
       oi_c_idx = df_oi["Call"].idxmax()
       oi_p_idx = df_oi["Put"].idxmax()
@@ -155,13 +153,11 @@ if st.button(
       max_tot_strike = df_oi.loc[tot_idx, "Strike"]
       max_tot_val = df_oi.loc[tot_idx, "Total_OI"]
 
-    st.success(
-        f"✅ Phân tích thành công cho phiên giao dịch ngày: **{selected_date}**"
-    )
+    st.success(f"✅ Đã trích xuất dữ liệu thành công cho ngày: {selected_date}")
 
     col1, col2 = st.columns(2)
     with col1:
-      st.subheader(f"📌 GEX (Phiên {selected_date})")
+      st.subheader(f"📌 GAMMA EXPOSURE - GEX ({selected_date})")
       st.metric(
           label="GEX Call Wall",
           value=f"{gex_call_wall}",
@@ -175,7 +171,7 @@ if st.button(
       st.metric(label="Gamma Flip / Pinning", value=f"{gamma_flip_strike}")
 
     with col2:
-      st.subheader(f"📌 OPEN INTEREST (Phiên {selected_date})")
+      st.subheader(f"📌 OPEN INTEREST - OI ({selected_date})")
       st.metric(
           label="Max Call OI",
           value=f"{max_call_strike}",
@@ -192,10 +188,10 @@ if st.button(
           delta=f"{max_tot_val} HĐ",
       )
   else:
-    st.warning("⚠️ Vui lòng tải đủ file CSV và chọn ngày giao dịch ở sidebar!")
+    st.warning("⚠️ Vui lòng tải đủ file CSV và chọn ngày ở Sidebar!")
 
 # ==========================================
-# 5. MÔ HÌNH BIẾN ĐỘNG SỰ KIỆN & EXPECTED MOVE
+# 6. MÔ HÌNH BIẾN ĐỘNG SỰ KIỆN & EXPECTED MOVE
 # ==========================================
 st.markdown("---")
 st.subheader("⚡ MÔ HÌNH TÍNH TOÁN BIẾN ĐỘNG SỰ KIỆN & EXPECTED MOVE")
