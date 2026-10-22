@@ -36,10 +36,10 @@ current_spot = st.sidebar.number_input(
     "Giá Spot tham chiếu (GC1! / XAU):", value=4036.0, step=1.0
 )
 sigma_event_input = st.sidebar.number_input(
-    "Độ biến động sự kiện Sigma Event (%):", value=15.0, step=0.5
+    "Độ biến động sự kiện Sigma Event (%):", value=12.81, step=0.01
 )
 days_to_expiry = st.sidebar.number_input(
-    "Số ngày đến khi đáo hạn/ra tin:", value=1.0, step=0.5
+    "Số ngày đến khi đáo hạn/ra tin:", value=1.0, step=0.01
 )
 
 
@@ -47,9 +47,9 @@ days_to_expiry = st.sidebar.number_input(
 # 3. HÀM XỬ LÝ DỮ LIỆU QUIKSTRIKE THEO NGÀY CHỈ ĐỊNH
 # ==========================================
 def get_available_dates(file):
+  file.seek(0)  # Reset con trỏ đọc file
   df_raw = pd.read_csv(file, header=None)
   date_row = df_raw.iloc[0, :]
-  # Lọc ra các cột có chứa định dạng ngày tháng (bỏ qua cột Strike)
   dates = [
       str(val).strip()
       for val in date_row
@@ -59,15 +59,13 @@ def get_available_dates(file):
 
 
 def process_quikstrike_by_date(file, target_date):
+  file.seek(0)  # Reset con trỏ đọc file
   df_raw = pd.read_csv(file, header=None)
 
-  # Cột 0 là mốc Strike
   strike = pd.to_numeric(df_raw.iloc[2:, 0], errors="coerce")
-
   date_row = df_raw.iloc[0, :]
   c_p_row = df_raw.iloc[1, :]
 
-  # Tìm index cột C và P tương ứng với target_date
   call_col_idx = None
   put_col_idx = None
 
@@ -80,14 +78,12 @@ def process_quikstrike_by_date(file, target_date):
       elif cp_val == "P":
         put_col_idx = col_idx
 
-  # Nếu tìm thấy ngày, trích xuất dữ liệu, ngược lại trả về 0
   if call_col_idx is not None and put_col_idx is not None:
     calls = pd.to_numeric(df_raw.iloc[2:, call_col_idx], errors="coerce").fillna(
         0
     )
     puts = pd.to_numeric(df_raw.iloc[2:, put_col_idx], errors="coerce").fillna(0)
   else:
-    # Fallback cộng tổng toàn bộ nếu không khớp ngày
     c_indices = [
         i
         for i, val in enumerate(c_p_row)
@@ -220,6 +216,7 @@ st.info(
 
 if uploaded_event is not None:
   try:
+    uploaded_event.seek(0)
     df_event = pd.read_excel(uploaded_event)
     st.dataframe(df_event.dropna(how="all"), use_container_width=True)
   except Exception as e:
