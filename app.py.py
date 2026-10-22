@@ -3,26 +3,30 @@ import streamlit as st
 
 # Cấu hình giao diện trang web
 st.set_page_config(
-    page_title="Quant Options Web Dashboard", page_icon="📊", layout="centered"
+    page_title="Quant Options Web Dashboard", page_icon="📊", layout="wide"
 )
 
-st.title("📊 HỆ THỐNG TỰ ĐỘNG XỬ LÝ DỮ LIỆU QUIKSTRIKE")
+st.title("📊 HỆ THỐNG TỰ ĐỘNG XỬ LÝ DỮ LIỆU QUIKSTRIKE & EVENT VOLATILITY")
 st.write(
-    "Tải lên 2 file CSV của bạn để hệ thống tự động tính toán các mốc Strike và"
-    " khối lượng hợp đồng cho TradingView."
+    "Tải lên các file dữ liệu QuikStrike CSV và File tính toán Event Volatility"
+    " để hệ thống tự động phân tích các mốc Strike, biến động sự kiện và biên"
+    " độ chạy giá."
 )
 
-# 1. Khu vực tải file lên (Upload files)
-st.sidebar.header("Tải file dữ liệu lên")
+# 1. Khu vực tải file lên (Upload files) ở Sidebar
+st.sidebar.header("📁 Tải file dữ liệu lên")
 uploaded_gamma = st.sidebar.file_uploader(
     "1. Chọn file Gamma_Exposure.csv", type=["csv"]
 )
 uploaded_oi = st.sidebar.file_uploader(
     "2. Chọn file Open_Interest.csv", type=["csv"]
 )
+uploaded_event = st.sidebar.file_uploader(
+    "3. Chọn file Event Volatility (.xlsx)", type=["xlsx"]
+)
 
 
-# Hàm xử lý file QuikStrike
+# Hàm xử lý file QuikStrike CSV
 def process_quikstrike(file):
   df_raw = pd.read_csv(file, header=0)
   strike = pd.to_numeric(df_raw.iloc[:, 0], errors="coerce")
@@ -32,7 +36,7 @@ def process_quikstrike(file):
       df_raw.iloc[:, call_cols].apply(pd.to_numeric, errors="coerce").fillna(0)
   )
   puts_df = (
-      df_raw.iloc[:, put_cols].apply(pd.to_numeric, errors='coerce').fillna(0)
+      df_raw.iloc[:, put_cols].apply(pd.to_numeric, errors="coerce").fillna(0)
   )
   total_call = calls_df.sum(axis=1)
   total_put = puts_df.sum(axis=1)
@@ -42,12 +46,14 @@ def process_quikstrike(file):
   return df
 
 
-# 2. Nút bấm thực thi
+# 2. Nút bấm thực thi chính
 if st.button(
-    "🚀 BẮT ĐẦU XỬ LÝ DỮ LIỆU", type="primary", use_container_width=True
+    "🚀 BẮT ĐẦU PHÂN TÍCH QUANTRIC", type="primary", use_container_width=True
 ):
+
+  # Xử lý phần QuikStrike GEX & OI
   if uploaded_gamma is not None and uploaded_oi is not None:
-    with st.spinner("Đang phân tích dữ liệu QuikStrike..."):
+    with st.spinner("Đang xử lý ma trận Options QuikStrike..."):
       # Xử lý GEX
       df_gex = process_quikstrike(uploaded_gamma)
       gex_c_idx = df_gex["Call"].idxmax()
@@ -74,15 +80,15 @@ if st.button(
       df_oi["Total_OI"] = df_oi["Call"] + df_oi["Put"]
       tot_idx = df_oi["Total_OI"].idxmax()
       max_tot_strike = df_oi.loc[tot_idx, "Strike"]
-      max_tot_val = df_oi.loc[tot_idx, "Total_OI"]  # Đã gán đúng biến này
+      max_tot_val = df_oi.loc[tot_idx, "Total_OI"]
 
-    st.success("✅ Xử lý thành công! Dưới đây là các thông số để nhập TradingView:")
+    st.success("✅ Phân tích QuikStrike thành công!")
 
-    # Hiển thị kết quả bằng bảng trực quan
+    # Hiển thị kết quả Options qua các cột giao diện
     col1, col2 = st.columns(2)
 
     with col1:
-      st.subheader("📌 BẢNG A: GAMMA EXPOSURE")
+      st.subheader("📌 BẢNG A: GAMMA EXPOSURE (GEX)")
       st.metric(
           label="GEX Call Wall",
           value=f"{gex_call_wall}",
@@ -96,7 +102,7 @@ if st.button(
       st.metric(label="Gamma Flip / Pinning", value=f"{gamma_flip_strike}")
 
     with col2:
-      st.subheader("📌 BẢNG B: OPEN INTEREST")
+      st.subheader("📌 BẢNG B: OPEN INTEREST (OI)")
       st.metric(
           label="Max Call OI",
           value=f"{max_call_strike}",
@@ -112,6 +118,30 @@ if st.button(
           value=f"{max_tot_strike}",
           delta=f"{max_tot_val} HĐ",
       )
-
   else:
-    st.warning("⚠️ Vui lòng tải lên đầy đủ cả 2 file CSV ở thanh bên trái!")
+    st.warning(
+        "⚠️ Vui lòng tải lên cả 2 file `Gamma_Exposure.csv` và"
+        " `Open_Interest.csv` để hiển thị phần QuikStrike!"
+    )
+
+  # Xử lý phần Event Volatility Calculator mở rộng
+  if uploaded_event is not None:
+    st.markdown("---")
+    st.subheader("⚡ MÔ HÌNH TÍNH TOÁN BIẾN ĐỘNG SỰ KIỆN (EVENT VOLATILITY)")
+    try:
+      df_event = pd.read_excel(uploaded_event)
+      st.dataframe(df_event.dropna(how="all"), use_container_width=True)
+      st.info(
+          "💡 **Gợi ý Quant:** Sử dụng các thông số $\\sigma_{\\text{EVENT}}$ từ"
+          " bảng trên để đánh giá mức độ co giãn phí quyền chọn trước và sau"
+          " tin tức lớn (như FOMO, CPI, NFP), phục vụ chiến lược quản trị rủi"
+          " ro hoặc giao dịch biên độ breakout cho XAU/USD."
+      )
+    except Exception as e:
+      st.error(f"Lỗi đọc file Excel Event Volatility: {e}")
+  else:
+    st.markdown("---")
+    st.info(
+        "ℹ️ Bạn có thể tải lên file Excel `Event Volatility Calculator.xlsx` ở"
+        " thanh bên trái để hiển thị bảng phân tích độ biến động sự kiện."
+    )
