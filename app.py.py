@@ -11,8 +11,8 @@ st.set_page_config(
 
 st.title("📊 HỆ THỐNG TỰ ĐỘNG XỬ LÝ DỮ LIỆU QUIKSTRIKE & EVENT VOLATILITY")
 st.write(
-    "Hệ thống tự động bóc tách dữ liệu theo Mã kỳ hạn / Contract / DTE từ file"
-    " CSV mà không phụ thuộc vào định dạng ngày tháng."
+    "Hệ thống tự động trích xuất dữ liệu theo Mã kỳ hạn / Contract / DTE một cách"
+    " trực tiếp và tối ưu."
 )
 
 # ==========================================
@@ -30,70 +30,66 @@ uploaded_event = st.sidebar.file_uploader(
 )
 
 st.sidebar.markdown("---")
-st.sidebar.header("⚡ Cấu hình Thông số & Expected Move")
+st.sidebar.header("⚡ Cấu hình Kỳ hạn & Expected Move")
 current_spot = st.sidebar.number_input(
     "Giá Spot tham chiếu (GC1! / XAU):", value=4036.0, step=1.0
 )
 sigma_event_input = st.sidebar.number_input(
-    "Độ biến động sự kiện Sigma Event (%):", value=12.81, step=0.01
+    "Độ biến động sự kiện Sigma Event (%):", value=21.12, step=0.01
 )
 days_to_expiry = st.sidebar.number_input(
-    "Số ngày đến khi đáo hạn/ra tin:", value=1.0, step=0.01
+    "Số ngày đến khi ra tin (DTE):", value=0.04, step=0.01
 )
 
 
 # ==========================================
-# 3. HÀM TỰ ĐỘNG LẤY DANH SÁCH MÃ KỲ HẠN / CONTRACT / DTE
+# 3. HÀM TỰ ĐỘNG LẤY DANH SÁCH MÃ KỲ HẠN / DTE
 # ==========================================
 def get_available_contracts(file):
   file.seek(0)
   df_raw = pd.read_csv(file, header=None)
-  # Quét dòng 0 hoặc dòng 1 để tìm các mã kỳ hạn hoặc DTE
-  row_0 = df_raw.iloc[0, :]
-  contracts = [
-      str(val).strip()
-      for val in row_0
-      if pd.notna(val) and str(val).strip().upper() != "STRIKE"
-  ]
-  if not contracts and len(df_raw) > 1:
-    row_1 = df_raw.iloc[1, :]
-    contracts = [
-        str(val).strip() for val in row_1 if pd.notna(val) and "DTE" in str(val)
-    ]
-  return sorted(list(set(contracts)))
+  contracts = []
+  # Quét 2 dòng đầu để tìm mã hợp đồng hoặc DTE
+  for r in range(min(2, len(df_raw))):
+    for val in df_raw.iloc[r, :]:
+      v_str = str(val).strip()
+      if (
+          pd.notna(val)
+          and v_str.upper() != "STRIKE"
+          and v_str != ""
+          and v_str != "nan"
+      ):
+        if v_str not in contracts:
+          contracts.append(v_str)
+  return contracts
 
 
 # ==========================================
-# 4. HÀM XỬ LÝ DỮ LIỆU THEO KỲ HẠN LỰA CHỌN
+# 4. HÀM XỬ LÝ DỮ LIỆU LINH HOẠT THEO MÃ KỲ HẠN
 # ==========================================
 def process_quikstrike_flexible(file, target_contract):
   file.seek(0)
   df_raw = pd.read_csv(file, header=None)
 
-  # Tự động tìm dòng chứa giá trị Strike ở cột đầu tiên
-  strike_col_idx = 0
-  start_row = 2
-  for r in range(min(5, len(df_raw))):
-    val = str(df_raw.iloc[r, 0]).strip().lower()
-    if "strike" in val or val.replace(".", "", 1).isdigit():
-      if val.replace(".", "", 1).isdigit():
-        start_row = r
-      else:
-        start_row = r + 1
+  # Tự động tìm dòng chứa dữ liệu Strike (cột đầu tiên là số)
+  start_row = 3
+  for r in range(len(df_raw)):
+    val = str(df_raw.iloc[r, 0]).strip()
+    if val.replace(".", "", 1).isdigit():
+      start_row = r
       break
 
-  strike = pd.to_numeric(df_raw.iloc[start_row:, strike_col_idx], errors="coerce")
+  strike = pd.to_numeric(df_raw.iloc[start_row:, 0], errors="coerce")
 
-  # Tìm cột Call (C) và Put (P) khớp với target_contract
   call_col_idx = None
   put_col_idx = None
 
+  # Dò tìm vị trí cột chứa target_contract và các cột C/P đi kèm
   for r in range(min(3, len(df_raw))):
     for col_idx in range(len(df_raw.columns)):
       cell_val = str(df_raw.iloc[r, col_idx]).strip()
       if cell_val == target_contract:
-        # Dò các cột bên cạnh tìm C và P
-        for c_idx in range(col_idx, min(col_idx + 5, len(df_raw.columns))):
+        for c_idx in range(col_idx, min(col_idx + 6, len(df_raw.columns))):
           cp_val = str(df_raw.iloc[r + 1 if r + 1 < len(df_raw) else r, c_idx]).strip().upper()
           if cp_val == "C" and call_col_idx is None:
             call_col_idx = c_idx
@@ -104,7 +100,7 @@ def process_quikstrike_flexible(file, target_contract):
     if call_col_idx is not None:
       break
 
-  # Nếu không tìm thấy chính xác, lấy mặc định 2 cột dữ liệu đầu tiên sau cột Strike
+  # Nếu không tìm thấy chính xác, lấy mặc định cột 1 (Call) và cột 2 (Put)
   if call_col_idx is None or put_col_idx is None:
     call_col_idx = 1
     put_col_idx = 2
@@ -134,7 +130,8 @@ if uploaded_oi is not None:
 
 if st.button("🚀 BẮT ĐẦU PHÂN TÍCH", type="primary", use_container_width=True):
   if uploaded_gamma is not None and uploaded_oi is not None and selected_gamma_contract and selected_oi_contract:
-    with st.spinner("Đang xử lý dữ liệu định lượng..."):
+    with st.spinner("Đang xử lý dữ liệu..."):
+      # Xử lý Gamma
       df_gex = process_quikstrike_flexible(uploaded_gamma, selected_gamma_contract)
       gex_c_idx = df_gex["Call"].idxmax()
       gex_p_idx = df_gex["Put"].idxmax()
@@ -146,6 +143,7 @@ if st.button("🚀 BẮT ĐẦU PHÂN TÍCH", type="primary", use_container_widt
       df_gex["Net_GEX"] = (df_gex["Call"] - df_gex["Put"]).abs()
       gamma_flip_strike = df_gex.loc[df_gex["Net_GEX"].idxmin(), "Strike"]
 
+      # Xử lý Open Interest
       df_oi = process_quikstrike_flexible(uploaded_oi, selected_oi_contract)
       oi_c_idx = df_oi["Call"].idxmax()
       oi_p_idx = df_oi["Put"].idxmax()
@@ -159,7 +157,7 @@ if st.button("🚀 BẮT ĐẦU PHÂN TÍCH", type="primary", use_container_widt
       max_tot_strike = df_oi.loc[tot_idx, "Strike"]
       max_tot_val = df_oi.loc[tot_idx, "Total_OI"]
 
-    st.success("✅ Phân tích thành công!")
+    st.success("✅ Phân tích định lượng thành công!")
 
     col1, col2 = st.columns(2)
     with col1:
