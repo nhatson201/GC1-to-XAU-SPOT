@@ -11,9 +11,8 @@ st.set_page_config(
 
 st.title("📊 HỆ THỐNG TỰ ĐỘNG XỬ LÝ DỮ LIỆU QUIKSTRIKE & EVENT VOLATILITY")
 st.write(
-    "Tải lên các file dữ liệu QuikStrike CSV và File tính toán Event Volatility"
-    " để hệ thống tự động phân tích các mốc Strike, biến động sự kiện và biên"
-    " độ chạy giá theo kỳ hạn DTE."
+    "Hệ thống tự động bóc tách dữ liệu theo Mã kỳ hạn / Contract / DTE từ file"
+    " CSV mà không phụ thuộc vào định dạng ngày tháng."
 )
 
 # ==========================================
@@ -31,7 +30,7 @@ uploaded_event = st.sidebar.file_uploader(
 )
 
 st.sidebar.markdown("---")
-st.sidebar.header("⚡ Cấu hình Kỳ hạn & Expected Move")
+st.sidebar.header("⚡ Cấu hình Thông số & Expected Move")
 current_spot = st.sidebar.number_input(
     "Giá Spot tham chiếu (GC1! / XAU):", value=4036.0, step=1.0
 )
@@ -44,124 +43,101 @@ days_to_expiry = st.sidebar.number_input(
 
 
 # ==========================================
-# 3. HÀM TRÍCH XUẤT DANH SÁCH DTE / NGÀY TỪ FILE
+# 3. HÀM TỰ ĐỘNG LẤY DANH SÁCH MÃ KỲ HẠN / CONTRACT / DTE
 # ==========================================
-def get_available_options(file, is_gamma=True):
+def get_available_contracts(file):
   file.seek(0)
   df_raw = pd.read_csv(file, header=None)
-  options = []
-  if is_gamma:
-    # Gamma_Exposure có dòng 1 chứa DTE (VD: '1 DTE', '5 DTE'...)
-    row_dte = df_raw.iloc[1, :]
-    options = [
-        str(val).strip()
-        for val in row_dte
-        if pd.notna(val) and "DTE" in str(val).upper()
+  # Quét dòng 0 hoặc dòng 1 để tìm các mã kỳ hạn hoặc DTE
+  row_0 = df_raw.iloc[0, :]
+  contracts = [
+      str(val).strip()
+      for val in row_0
+      if pd.notna(val) and str(val).strip().upper() != "STRIKE"
+  ]
+  if not contracts and len(df_raw) > 1:
+    row_1 = df_raw.iloc[1, :]
+    contracts = [
+        str(val).strip() for val in row_1 if pd.notna(val) and "DTE" in str(val)
     ]
-  else:
-    # Open_Interest có dòng 0 chứa Ngày (VD: '21/10/2026'...)
-    row_date = df_raw.iloc[0, :]
-    options = [
-        str(val).strip() for val in row_date if pd.notna(val) and "/" in str(val)
-    ]
-  return sorted(list(set(options)))
+  return sorted(list(set(contracts)))
 
 
 # ==========================================
-# 4. HÀM XỬ LÝ DỮ LIỆU THEO LỰA CHỌN DTE / NGÀY
+# 4. HÀM XỬ LÝ DỮ LIỆU THEO KỲ HẠN LỰA CHỌN
 # ==========================================
-def process_quikstrike_by_selection(file, target_val, is_gamma=True):
+def process_quikstrike_flexible(file, target_contract):
   file.seek(0)
   df_raw = pd.read_csv(file, header=None)
 
-  strike = pd.to_numeric(df_raw.iloc[3:, 0], errors="coerce")
+  # Tự động tìm dòng chứa giá trị Strike ở cột đầu tiên
+  strike_col_idx = 0
+  start_row = 2
+  for r in range(min(5, len(df_raw))):
+    val = str(df_raw.iloc[r, 0]).strip().lower()
+    if "strike" in val or val.replace(".", "", 1).isdigit():
+      if val.replace(".", "", 1).isdigit():
+        start_row = r
+      else:
+        start_row = r + 1
+      break
 
+  strike = pd.to_numeric(df_raw.iloc[start_row:, strike_col_idx], errors="coerce")
+
+  # Tìm cột Call (C) và Put (P) khớp với target_contract
   call_col_idx = None
   put_col_idx = None
 
-  if is_gamma:
-    row_header = df_raw.iloc[1, :]  # Dòng chứa DTE
-    row_cp = df_raw.iloc[2, :]  # Dòng chứa C/P
-    for col_idx in range(len(row_header)):
-      if str(row_header.iloc[col_idx]).strip() == target_val:
-        # Tìm cột C và P kế tiếp
-        for c_idx in range(col_idx, len(row_cp)):
-          cp = str(row_cp.iloc[c_idx]).strip().upper()
-          if cp == "C" and call_col_idx is None:
+  for r in range(min(3, len(df_raw))):
+    for col_idx in range(len(df_raw.columns)):
+      cell_val = str(df_raw.iloc[r, col_idx]).strip()
+      if cell_val == target_contract:
+        # Dò các cột bên cạnh tìm C và P
+        for c_idx in range(col_idx, min(col_idx + 5, len(df_raw.columns))):
+          cp_val = str(df_raw.iloc[r + 1 if r + 1 < len(df_raw) else r, c_idx]).strip().upper()
+          if cp_val == "C" and call_col_idx is None:
             call_col_idx = c_idx
-          elif cp == "P" and put_col_idx is None:
+          elif cp_val == "P" and put_col_idx is None:
             put_col_idx = c_idx
             break
         break
-  else:
-    row_header = df_raw.iloc[0, :]  # Dòng chứa Ngày
-    row_cp = df_raw.iloc[1, :]  # Dòng chứa C/P
-    for col_idx in range(len(row_header)):
-      if str(row_header.iloc[col_idx]).strip() == target_val:
-        for c_idx in range(col_idx, len(row_cp)):
-          cp = str(row_cp.iloc[c_idx]).strip().upper()
-          if cp == "C" and call_col_idx is None:
-            call_col_idx = c_idx
-          elif cp == "P" and put_col_idx is None:
-            put_col_idx = c_idx
-            break
-        break
+    if call_col_idx is not None:
+      break
 
-  if call_col_idx is not None and put_col_idx is not None:
-    calls = pd.to_numeric(df_raw.iloc[3:, call_col_idx], errors="coerce").fillna(
-        0
-    )
-    puts = pd.to_numeric(df_raw.iloc[3:, put_col_idx], errors="coerce").fillna(0)
-  else:
-    calls = pd.Series(0, index=df_raw.index[3:])
-    puts = pd.Series(0, index=df_raw.index[3:])
+  # Nếu không tìm thấy chính xác, lấy mặc định 2 cột dữ liệu đầu tiên sau cột Strike
+  if call_col_idx is None or put_col_idx is None:
+    call_col_idx = 1
+    put_col_idx = 2
 
-  df = pd.DataFrame(
-      {"Strike": strike, "Call": calls, "Put": puts}
-  ).dropna(subset=["Strike"])
+  calls = pd.to_numeric(df_raw.iloc[start_row:, call_col_idx], errors="coerce").fillna(0)
+  puts = pd.to_numeric(df_raw.iloc[start_row:, put_col_idx], errors="coerce").fillna(0)
+
+  df = pd.DataFrame({"Strike": strike, "Call": calls, "Put": puts}).dropna(subset=["Strike"])
   return df
 
 
 # ==========================================
-# 5. GIAO DIỆN LỰA CHỌN DTE VÀ PHÂN TÍCH
+# 5. GIAO DIỆN LỰA CHỌN & PHÂN TÍCH
 # ==========================================
-selected_dte = None
-selected_oi_date = None
+selected_gamma_contract = None
+selected_oi_contract = None
 
 if uploaded_gamma is not None:
-  dte_list = get_available_options(uploaded_gamma, is_gamma=True)
-  if dte_list:
-    selected_dte = st.sidebar.selectbox("⏳ Chọn Kỳ hạn DTE (Gamma):", dte_list)
+  gamma_list = get_available_contracts(uploaded_gamma)
+  if gamma_list:
+    selected_gamma_contract = st.sidebar.selectbox("⏳ Chọn Kỳ hạn Gamma (Contract/DTE):", gamma_list)
 
 if uploaded_oi is not None:
-  oi_date_list = get_available_options(uploaded_oi, is_gamma=False)
-  if oi_date_list:
-    selected_oi_date = st.sidebar.selectbox(
-        "📅 Chọn Ngày (Open Interest):", oi_date_list
-    )
+  oi_list = get_available_contracts(uploaded_oi)
+  if oi_list:
+    selected_oi_contract = st.sidebar.selectbox("📊 Chọn Kỳ hạn Open Interest (Contract/DTE):", oi_list)
 
-if st.button(
-    "🚀 BẮT ĐẦU PHÂN TÍCH THEO KỲ HẠN DTE",
-    type="primary",
-    use_container_width=True,
-):
-  if (
-      uploaded_gamma is not None
-      and uploaded_oi is not None
-      and selected_dte
-      and selected_oi_date
-  ):
-    with st.spinner(
-        f"Đang xử lý dữ liệu Gamma (DTE: {selected_dte}) và OI (Ngày:"
-        f" {selected_oi_date})..."
-    ):
-      # 1. Xử lý Gamma theo DTE chọn
-      df_gex = process_quikstrike_by_selection(
-          uploaded_gamma, selected_dte, is_gamma=True
-      )
+if st.button("🚀 BẮT ĐẦU PHÂN TÍCH", type="primary", use_container_width=True):
+  if uploaded_gamma is not None and uploaded_oi is not None and selected_gamma_contract and selected_oi_contract:
+    with st.spinner("Đang xử lý dữ liệu định lượng..."):
+      df_gex = process_quikstrike_flexible(uploaded_gamma, selected_gamma_contract)
       gex_c_idx = df_gex["Call"].idxmax()
       gex_p_idx = df_gex["Put"].idxmax()
-
       gex_call_wall = df_gex.loc[gex_c_idx, "Strike"]
       gex_call_val = df_gex.loc[gex_c_idx, "Call"]
       gex_put_wall = df_gex.loc[gex_p_idx, "Strike"]
@@ -170,13 +146,9 @@ if st.button(
       df_gex["Net_GEX"] = (df_gex["Call"] - df_gex["Put"]).abs()
       gamma_flip_strike = df_gex.loc[df_gex["Net_GEX"].idxmin(), "Strike"]
 
-      # 2. Xử lý OI theo ngày chọn
-      df_oi = process_quikstrike_by_selection(
-          uploaded_oi, selected_oi_date, is_gamma=False
-      )
+      df_oi = process_quikstrike_flexible(uploaded_oi, selected_oi_contract)
       oi_c_idx = df_oi["Call"].idxmax()
       oi_p_idx = df_oi["Put"].idxmax()
-
       max_call_strike = df_oi.loc[oi_c_idx, "Strike"]
       max_call_val = df_oi.loc[oi_c_idx, "Call"]
       max_put_strike = df_oi.loc[oi_p_idx, "Strike"]
@@ -187,65 +159,33 @@ if st.button(
       max_tot_strike = df_oi.loc[tot_idx, "Strike"]
       max_tot_val = df_oi.loc[tot_idx, "Total_OI"]
 
-    st.success(
-        f"✅ Phân tích thành công! (Gamma DTE: **{selected_dte}** | OI Ngày:"
-        f" **{selected_oi_date}**)"
-    )
+    st.success("✅ Phân tích thành công!")
 
     col1, col2 = st.columns(2)
     with col1:
-      st.subheader(f"📌 GAMMA EXPOSURE (Kỳ hạn: {selected_dte})")
-      st.metric(
-          label="GEX Call Wall",
-          value=f"{gex_call_wall}",
-          delta=f"GEX: {gex_call_val}",
-      )
-      st.metric(
-          label="GEX Put Wall",
-          value=f"{gex_put_wall}",
-          delta=f"GEX: {gex_put_val}",
-      )
+      st.subheader(f"📌 GAMMA ({selected_gamma_contract})")
+      st.metric(label="GEX Call Wall", value=f"{gex_call_wall}", delta=f"GEX: {gex_call_val}")
+      st.metric(label="GEX Put Wall", value=f"{gex_put_wall}", delta=f"GEX: {gex_put_val}")
       st.metric(label="Gamma Flip / Pinning", value=f"{gamma_flip_strike}")
 
     with col2:
-      st.subheader(f"📌 OPEN INTEREST (Ngày: {selected_oi_date})")
-      st.metric(
-          label="Max Call OI",
-          value=f"{max_call_strike}",
-          delta=f"{max_call_val} HĐ",
-      )
-      st.metric(
-          label="Max Put OI",
-          value=f"{max_put_strike}",
-          delta=f"{max_put_val} HĐ",
-      )
-      st.metric(
-          label="Max Total OI (Pin)",
-          value=f"{max_tot_strike}",
-          delta=f"{max_tot_val} HĐ",
-      )
+      st.subheader(f"📌 OPEN INTEREST ({selected_oi_contract})")
+      st.metric(label="Max Call OI", value=f"{max_call_strike}", delta=f"{max_call_val} HĐ")
+      st.metric(label="Max Put OI", value=f"{max_put_strike}", delta=f"{max_put_val} HĐ")
+      st.metric(label="Max Total OI (Pin)", value=f"{max_tot_strike}", delta=f"{max_tot_val} HĐ")
   else:
-    st.warning("⚠️ Vui lòng tải đủ file CSV và chọn các thông số ở Sidebar!")
+    st.warning("⚠️ Vui lòng tải đủ file CSV và chọn thông số kỳ hạn ở Sidebar!")
 
 # ==========================================
-# 6. MÔ HÌNH BIẾN ĐỘNG SỰ KIỆN & EXPECTED MOVE
+# 6. MÔ HÌNH EXPECTED MOVE
 # ==========================================
 st.markdown("---")
-st.subheader("⚡ MÔ HÌNH TÍNH TOÁN BIẾN ĐỘNG SỰ KIỆN & EXPECTED MOVE")
-
-expected_move_val = (
-    current_spot
-    * (sigma_event_input / 100.0)
-    * math.sqrt(days_to_expiry / 365.0)
-)
+st.subheader("⚡ MÔ HÌNH BIẾN ĐỘNG SỰ KIỆN & EXPECTED MOVE")
+expected_move_val = current_spot * (sigma_event_input / 100.0) * math.sqrt(days_to_expiry / 365.0)
 upper_bound = current_spot + expected_move_val
 lower_bound = current_spot - expected_move_val
 
-st.info(
-    f"🎯 **Biên độ dự kiến (Expected Move):** $\\pm$ **{expected_move_val:.2f}"
-    f" USD** (Vùng giá dao động an toàn: **{lower_bound:.2f}** đến"
-    f" **{upper_bound:.2f}**)"
-)
+st.info(f"🎯 **Biên độ dự kiến (Expected Move):** $\\pm$ **{expected_move_val:.2f} USD** (Vùng an toàn: **{lower_bound:.2f}** đến **{upper_bound:.2f}**)")
 
 if uploaded_event is not None:
   try:
@@ -253,9 +193,4 @@ if uploaded_event is not None:
     df_event = pd.read_excel(uploaded_event)
     st.dataframe(df_event.dropna(how="all"), use_container_width=True)
   except Exception as e:
-    st.error(f"Lỗi đọc file Excel Event Volatility: {e}")
-else:
-  st.info(
-      "ℹ️ Hãy tải lên file Excel `Event Volatility Calculator.xlsx` ở thanh"
-      " bên trái để hiển thị bảng dữ liệu sự kiện chi tiết."
-  )
+    st.error(f"Lỗi đọc file Excel: {e}")
