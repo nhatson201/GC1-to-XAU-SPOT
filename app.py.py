@@ -1,3 +1,4 @@
+import math
 import pandas as pd
 import streamlit as st
 
@@ -13,7 +14,9 @@ st.write(
     " độ chạy giá."
 )
 
-# 1. Khu vực tải file lên (Upload files) ở Sidebar
+# ==========================================
+# 1. KHU VỰC THANH BÊN (SIDEBAR) - TẢI FILE & CẤU HÌNH
+# ==========================================
 st.sidebar.header("📁 Tải file dữ liệu lên")
 uploaded_gamma = st.sidebar.file_uploader(
     "1. Chọn file Gamma_Exposure.csv", type=["csv"]
@@ -23,6 +26,18 @@ uploaded_oi = st.sidebar.file_uploader(
 )
 uploaded_event = st.sidebar.file_uploader(
     "3. Chọn file Event Volatility (.xlsx)", type=["xlsx"]
+)
+
+st.sidebar.markdown("---")
+st.sidebar.header("⚙️ Cấu hình Expected Move")
+current_spot = st.sidebar.number_input(
+    "Giá Spot tham chiếu (GC1! / XAU):", value=4036.0, step=1.0
+)
+sigma_event_input = st.sidebar.number_input(
+    "Độ biến động sự kiện Sigma Event (%):", value=15.0, step=0.5
+)
+days_to_expiry = st.sidebar.number_input(
+    "Số ngày đến khi đáo hạn/ra tin:", value=1.0, step=0.5
 )
 
 
@@ -46,12 +61,12 @@ def process_quikstrike(file):
   return df
 
 
-# 2. Nút bấm thực thi chính
+# ==========================================
+# 2. KHU VỰC PHÂN TÍCH QUIKSTRIKE (GEX & OI)
+# ==========================================
 if st.button(
-    "🚀 BẮT ĐẦU PHÂN TÍCH QUANTRIC", type="primary", use_container_width=True
+    "🚀 BẮT ĐẦU PHÂN TÍCH QUIKSTRIKE", type="primary", use_container_width=True
 ):
-
-  # Xử lý phần QuikStrike GEX & OI
   if uploaded_gamma is not None and uploaded_oi is not None:
     with st.spinner("Đang xử lý ma trận Options QuikStrike..."):
       # Xử lý GEX
@@ -84,9 +99,7 @@ if st.button(
 
     st.success("✅ Phân tích QuikStrike thành công!")
 
-    # Hiển thị kết quả Options qua các cột giao diện
     col1, col2 = st.columns(2)
-
     with col1:
       st.subheader("📌 BẢNG A: GAMMA EXPOSURE (GEX)")
       st.metric(
@@ -121,56 +134,38 @@ if st.button(
   else:
     st.warning(
         "⚠️ Vui lòng tải lên cả 2 file `Gamma_Exposure.csv` và"
-        " `Open_Interest.csv` để hiển thị phần QuikStrike!"
+        " `Open_Interest.csv` ở thanh bên trái!"
     )
 
-  # Xử lý phần Event Volatility Calculator mở rộng & Tính Expected Move
-  if uploaded_event is not None:
-    st.markdown("---")
-    st.subheader("⚡ MÔ HÌNH TÍNH TOÁN BIẾN ĐỘNG SỰ KIỆN & EXPECTED MOVE")
-    try:
-      df_event = pd.read_excel(uploaded_event)
+# ==========================================
+# 3. KHU VỰC MÔ HÌNH BIẾN ĐỘNG SỰ KIỆN & EXPECTED MOVE
+# ==========================================
+st.markdown("---")
+st.subheader("⚡ MÔ HÌNH TÍNH TOÁN BIẾN ĐỘNG SỰ KIỆN & EXPECTED MOVE")
 
-      # Nhập giá Spot tham chiếu để tính biên độ Expected Move
-      col_spot_input, _ = st.columns([1, 2])
-      with col_spot_input:
-        current_spot = st.number_input(
-            "Nhập giá Spot tham chiếu (GC1! / XAU):", value=4036.0, step=1.0
-        )
-        sigma_event_input = st.number_input(
-            "Nhập độ biến động sự kiện Sigma Event (%):",
-            value=15.0,
-            step=0.5,
-        )
-        days_to_expiry = st.number_input(
-            "Số ngày đến khi đáo hạn/ra tin:", value=1.0, step=0.5
-        )
+# Tính toán Expected Move trực tiếp dựa trên thông số ở Sidebar (không bị reset)
+expected_move_val = (
+    current_spot
+    * (sigma_event_input / 100.0)
+    * math.sqrt(days_to_expiry / 365.0)
+)
+upper_bound = current_spot + expected_move_val
+lower_bound = current_spot - expected_move_val
 
-      # Tính toán Expected Move
-      import math
+st.info(
+    f"🎯 **Biên độ dự kiến (Expected Move):** $\\pm$ **{expected_move_val:.2f}"
+    f" USD** (Vùng giá dao động an toàn: **{lower_bound:.2f}** đến"
+    f" **{upper_bound:.2f}**)"
+)
 
-      expected_move_val = (
-          current_spot
-          * (sigma_event_input / 100.0)
-          * math.sqrt(days_to_expiry / 365.0)
-      )
-      upper_bound = current_spot + expected_move_val
-      lower_bound = current_spot - expected_move_val
-
-      st.info(
-          f"🎯 **Biên độ dự kiến (Expected Move):** $\\pm$ **"
-          f"{expected_move_val:.2f} USD** (Vùng giá dao động an toàn:"
-          f" **{lower_bound:.2f}** đến **{upper_bound:.2f}**)"
-      )
-
-      # Hiển thị bảng Excel gốc
-      st.dataframe(df_event.dropna(how="all"), use_container_width=True)
-
-    except Exception as e:
-      st.error(f"Lỗi đọc file Excel Event Volatility: {e}")
-  else:
-    st.markdown("---")
-    st.info(
-        "ℹ️ Bạn có thể tải lên file Excel `Event Volatility Calculator.xlsx` ở"
-        " thanh bên trái để kích hoạt mô hình tính toán biến động sự kiện."
-    )
+if uploaded_event is not None:
+  try:
+    df_event = pd.read_excel(uploaded_event)
+    st.dataframe(df_event.dropna(how="all"), use_container_width=True)
+  except Exception as e:
+    st.error(f"Lỗi đọc file Excel Event Volatility: {e}")
+else:
+  st.info(
+      "ℹ️ Hãy tải lên file Excel `Event Volatility Calculator.xlsx` ở thanh"
+      " bên trái để hiển thị bảng dữ liệu sự kiện chi tiết."
+  )
