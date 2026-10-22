@@ -2,7 +2,9 @@ import math
 import pandas as pd
 import streamlit as st
 
-# Cấu hình giao diện trang web
+# ==========================================
+# 1. CẤU HÌNH GIAO DIỆN WEB STREAMLIT
+# ==========================================
 st.set_page_config(
     page_title="Quant Options Web Dashboard", page_icon="📊", layout="wide"
 )
@@ -15,7 +17,7 @@ st.write(
 )
 
 # ==========================================
-# 1. KHU VỰC THANH BÊN (SIDEBAR) - TẢI FILE & CẤU HÌNH
+# 2. KHU VỰC THANH BÊN (SIDEBAR) - TẢI FILE & CẤU HÌNH
 # ==========================================
 st.sidebar.header("📁 Tải file dữ liệu lên")
 uploaded_gamma = st.sidebar.file_uploader(
@@ -41,20 +43,45 @@ days_to_expiry = st.sidebar.number_input(
 )
 
 
-# Hàm xử lý file QuikStrike CSV
+# ==========================================
+# 3. HÀM XỬ LÝ DỮ LIỆU QUIKSTRIKE CSV (Định dạng văn bản động C/P)
+# ==========================================
 def process_quikstrike(file):
-  df_raw = pd.read_csv(file, header=0)
-  strike = pd.to_numeric(df_raw.iloc[:, 0], errors="coerce")
-  call_cols = [i for i in range(1, df_raw.shape[1] - 1) if i % 2 != 0]
-  put_cols = [i for i in range(2, df_raw.shape[1] - 1) if i % 2 == 0]
+  # Đọc toàn bộ dữ liệu thô không có header cố định
+  df_raw = pd.read_csv(file, header=None)
+
+  # Cột 0 là mốc Strike (bắt đầu từ hàng thứ 3 - index 2)
+  strike = pd.to_numeric(df_raw.iloc[2:, 0], errors="coerce")
+
+  # Tự động tìm hàng chứa ký hiệu 'C' và 'P' (hàng index 1)
+  c_p_row = df_raw.iloc[1, 1:]
+
+  call_col_indices = [
+      i + 1
+      for i, val in enumerate(c_p_row)
+      if str(val).strip().upper() == "C"
+  ]
+  put_col_indices = [
+      i + 1
+      for i, val in enumerate(c_p_row)
+      if str(val).strip().upper() == "P"
+  ]
+
+  # Trích xuất và ép kiểu số toàn bộ dữ liệu Call & Put
   calls_df = (
-      df_raw.iloc[:, call_cols].apply(pd.to_numeric, errors="coerce").fillna(0)
+      df_raw.iloc[2:, call_col_indices]
+      .apply(pd.to_numeric, errors="coerce")
+      .fillna(0)
   )
   puts_df = (
-      df_raw.iloc[:, put_cols].apply(pd.to_numeric, errors="coerce").fillna(0)
+      df_raw.iloc[2:, put_col_indices]
+      .apply(pd.to_numeric, errors="coerce")
+      .fillna(0)
   )
+
   total_call = calls_df.sum(axis=1)
   total_put = puts_df.sum(axis=1)
+
   df = pd.DataFrame(
       {"Strike": strike, "Call": total_call, "Put": total_put}
   ).dropna(subset=["Strike"])
@@ -62,7 +89,7 @@ def process_quikstrike(file):
 
 
 # ==========================================
-# 2. KHU VỰC PHÂN TÍCH QUIKSTRIKE (GEX & OI)
+# 4. KHU VỰC PHÂN TÍCH QUIKSTRIKE (GEX & OI)
 # ==========================================
 if st.button(
     "🚀 BẮT ĐẦU PHÂN TÍCH QUIKSTRIKE", type="primary", use_container_width=True
@@ -138,12 +165,11 @@ if st.button(
     )
 
 # ==========================================
-# 3. KHU VỰC MÔ HÌNH BIẾN ĐỘNG SỰ KIỆN & EXPECTED MOVE
+# 5. KHU VỰC MÔ HÌNH BIẾN ĐỘNG SỰ KIỆN & EXPECTED MOVE
 # ==========================================
 st.markdown("---")
 st.subheader("⚡ MÔ HÌNH TÍNH TOÁN BIẾN ĐỘNG SỰ KIỆN & EXPECTED MOVE")
 
-# Tính toán Expected Move trực tiếp dựa trên thông số ở Sidebar (không bị reset)
 expected_move_val = (
     current_spot
     * (sigma_event_input / 100.0)
